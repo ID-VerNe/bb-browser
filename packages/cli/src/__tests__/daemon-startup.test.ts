@@ -17,9 +17,11 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
+import { findPortOccupant, isPortInUse } from "../daemon-manager.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -419,6 +421,63 @@ describe("CDP 503 error includes diagnostics", () => {
       assert.ok(typeof response.error.hint === "string", "should include hint");
     } finally {
       await new Promise<void>(resolve => fakeCdp.close(() => resolve()));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Port conflict pre-check — detect orphaned daemon holding the port (#217)
+// ---------------------------------------------------------------------------
+
+describe("port conflict pre-check (#217 variant)", () => {
+  it("isPortInUse returns false for a free port", async () => {
+    // Pick a high port unlikely to be bound; listen(0) would give us a free one,
+    // but isPortInUse must report false on something we know is free.
+    const tester = net.createServer();
+    const port: number = await new Promise((resolve, reject) => {
+      tester.once("error", reject);
+      tester.listen(0, "127.0.0.1", () => {
+        const p = (tester.address() as net.AddressInfo).port;
+        tester.close(() => resolve(p));
+      });
+    });
+    // port is now free again
+    assert.equal(await isPortInUse("127.0.0.1", port), false, "free port should report not in use");
+  });
+
+  it("isPortInUse returns true when port is held by an orphan (no daemon.json, no HTTP)", async () => {
+    // A bare net server simulates an orphaned daemon: it holds the port but
+    // writes no daemon.json and exposes no HTTP /status.
+    const holder = net.createServer();
+    const port: number = await new Promise((resolve, reject) => {
+      holder.once("error", reject);
+      holder.listen(0, "127.0.0.1", () => resolve((holder.address() as net.AddressInfo).port));
+    });
+    try {
+      assert.equal(await isPortInUse("127.0.0.1", port), true, "held port should report in use");
+    } finally {
+      holder.close();
+    }
+  });
+
+  it("findPortOccupant reports occupant + kill hint instead of waiting 10s (#217)", async () => {
+    const holder = net.createServer();
+    const port: number = await new Promise((resolve, reject) => {
+      holder.once("error", reject);
+      holder.listen(0, "127.0.0.1", () => resolve((holder.address() as net.AddressInfo).port));
+    });
+    try {
+      const occ = await findPortOccupant("127.0.0.1", port);
+      assert.ok(occ, "should detect the occupant");
+      // PID may or may not resolve depending on platform permissions; the
+      // critical contract is the actionable kill hint so the user isn't stuck
+      // with a generic "did not start in time".
+      assert.ok(
+        /Stop-Process|kill|lsof|netstat/.test(occ.killHint),
+        `killHint should be actionable, got: ${occ.killHint}`,
+      );
+    } finally {
+      holder.close();
     }
   });
 });

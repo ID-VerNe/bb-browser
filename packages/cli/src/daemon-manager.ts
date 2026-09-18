@@ -3,6 +3,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { execSync } from "node:child_process";
+import { createServer } from "node:net";
 import { unlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -10,7 +12,9 @@ import { existsSync } from "node:fs";
 import type { Request, Response } from "@bb-browser/shared";
 import {
   COMMAND_TIMEOUT,
+  DAEMON_HOST,
   DAEMON_JSON,
+  DAEMON_PORT,
   type DaemonInfo,
   readDaemonJson,
   isProcessAlive,
@@ -33,6 +37,69 @@ async function deleteDaemonJson(): Promise<void> {
   try {
     await unlink(DAEMON_JSON);
   } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Port conflict pre-check — detect orphaned daemon holding the port
+// ---------------------------------------------------------------------------
+
+export interface PortOccupant {
+  pid: number;
+  name?: string;
+  killHint: string;
+}
+
+/**
+ * Probe whether a TCP port is already bound by trying to listen on it.
+ * EADDRINUSE (or any listen error) means the port is occupied.
+ */
+export async function isPortInUse(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = createServer();
+    tester.once("error", () => resolve(true));
+    tester.once("listening", () => tester.close(() => resolve(false)));
+    tester.listen(port, host);
+  });
+}
+
+/**
+ * If the daemon port is occupied, identify the occupant PID and produce a
+ * platform-specific kill hint. Returns null when the port is free.
+ *
+ * Used before spawning a new daemon: an orphaned daemon from a previous run
+ * (especially a sandboxed one whose writeDaemonJson failed silently) holds
+ * the port but leaves no daemon.json, so the reuse path can't see it. Without
+ * this check the new daemon spawn hits EADDRINUSE and the CLI polls for 10s
+ * before reporting a generic "did not start in time". See issue #217.
+ */
+export async function findPortOccupant(host: string, port: number): Promise<PortOccupant | null> {
+  if (!(await isPortInUse(host, port))) return null;
+
+  let pid = 0;
+  let name: string | undefined;
+  try {
+    if (process.platform === "win32") {
+      const out = execSync("netstat -ano -p TCP", { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
+      const m = out.match(new RegExp(`\\b${host}:${port}\\b.*LISTENING\\s+(\\d+)`, "i"));
+      if (m) pid = parseInt(m[1], 10);
+    } else {
+      try {
+        const out = execSync(`lsof -i :${port} -t -sTCP:LISTEN`, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
+        pid = parseInt(out.trim().split("\n")[0], 10);
+      } catch {
+        const out = execSync(`ss -lptn 'sport = :${port}'`, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
+        const m = out.match(/pid=(\d+)/);
+        if (m) pid = parseInt(m[1], 10);
+      }
+    }
+  } catch {}
+
+  const killHint = pid
+    ? (process.platform === "win32"
+        ? `Windows: Stop-Process -Id ${pid} -Force  (needs admin if sandboxed — run elevated)`
+        : `kill ${pid}  (sudo kill ${pid} if permission denied)`)
+    : `Could not identify occupant PID. Check manually: ${process.platform === "win32" ? `netstat -ano | findstr ${port}` : `lsof -i :${port}`}`;
+  return { pid, name, killHint };
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +187,21 @@ export async function ensureDaemon(): Promise<void> {
   }
 
   // Spawn daemon process with discovered CDP endpoint
+  // Pre-check: if the daemon port is already occupied (e.g. an orphaned
+  // daemon from a previous run whose writeDaemonJson failed silently),
+  // spawn would hit EADDRINUSE and the CLI would poll for 10s before a
+  // generic "did not start in time". Fail fast with the occupant PID. #217.
+  const occupant = await findPortOccupant(DAEMON_HOST, DAEMON_PORT);
+  if (occupant) {
+    throw new Error(
+      `bb-browser: daemon port ${DAEMON_PORT} is already in use by PID ${occupant.pid}` +
+      (occupant.name ? ` (${occupant.name})` : "") + ".\n\n" +
+      "Likely an orphaned daemon from a previous run that failed to write daemon.json.\n" +
+      "Kill it, then run: bb-browser daemon start\n\n" +
+      occupant.killHint,
+    );
+  }
+
   const daemonPath = getDaemonPath();
   const daemonArgs = [daemonPath, "--cdp-host", cdpInfo.host, "--cdp-port", String(cdpInfo.port)];
 
@@ -134,6 +216,7 @@ export async function ensureDaemon(): Promise<void> {
   const child = spawn(process.execPath, daemonArgs, {
     detached: true,
     stdio: "ignore",
+    windowsHide: true,
   });
   child.unref();
 
