@@ -43,14 +43,16 @@ function nextPorts(): { daemonPort: number; cdpPort: number } {
 // ---------------------------------------------------------------------------
 
 function findTsx(): string {
+  const isWin = process.platform === "win32";
+  const ext = isWin ? ".cmd" : "";
   const candidates = [
-    path.resolve(__dirname, "../../../../node_modules/.bin/tsx"),
-    path.resolve(__dirname, "../../../node_modules/.bin/tsx"),
+    path.resolve(__dirname, `../../../../node_modules/.bin/tsx${ext}`),
+    path.resolve(__dirname, `../../../node_modules/.bin/tsx${ext}`),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
-  return "tsx";
+  return isWin ? "tsx.cmd" : "tsx";
 }
 
 function startFakeCdp(port: number): Promise<Server> {
@@ -84,9 +86,10 @@ function stopFakeCdp(server: Server): Promise<void> {
 
 function spawnDaemon(port: number, cdpPort: number): ChildProcess {
   const sourceEntry = path.resolve(__dirname, "../index.ts");
+  const tsxCli = path.resolve(__dirname, "../../../../node_modules/tsx/dist/cli.mjs");
   return spawn(
-    findTsx(),
-    [sourceEntry, "--port", String(port), "--cdp-port", String(cdpPort)],
+    process.execPath,
+    [tsxCli, sourceEntry, "--port", String(port), "--cdp-port", String(cdpPort)],
     { stdio: "pipe", env: { ...process.env } },
   );
 }
@@ -199,7 +202,9 @@ describe("daemon lifecycle (no Chrome needed)", () => {
     assert.equal(typeof status.uptime, "number");
   });
 
-  it("daemon.json is deleted on graceful shutdown (SIGTERM)", async () => {
+  it("daemon.json is deleted on graceful shutdown (SIGTERM)", {
+    skip: process.platform === "win32" ? "SIGTERM graceful exit handlers are not supported on Windows" : false,
+  }, async () => {
     const { daemonPort, cdpPort } = nextPorts();
     await cleanupDaemonJson();
     fakeCdp = await startFakeCdp(cdpPort);

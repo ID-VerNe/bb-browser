@@ -37,9 +37,9 @@ const DAEMON_ENTRY = path.resolve(
   import.meta.dirname,
   "../../../daemon/src/index.ts",
 );
-const TSX = path.resolve(
+const TSX_CLI = path.resolve(
   import.meta.dirname,
-  "../../../../node_modules/.bin/tsx",
+  "../../../../node_modules/tsx/dist/cli.mjs",
 );
 
 // ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ describe("daemon startup without Chrome", () => {
   it("daemon exits with error when no CDP is available", async () => {
     // Spawn daemon with a port that nothing is listening on
     const unusedPort = 39999;
-    const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(unusedPort)], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(unusedPort)], {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -144,7 +144,7 @@ describe("daemon startup without Chrome", () => {
     // This reproduces what users see: CLI spawns daemon, daemon can't find Chrome, exits
     // CLI waits 5 seconds, never sees daemon.json, throws "Daemon did not start in time"
     const unusedPort = 39999;
-    const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(unusedPort)], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(unusedPort)], {
       detached: true,
       stdio: "ignore",
     });
@@ -185,7 +185,7 @@ describe("daemon startup with CDP available", () => {
   });
 
   it("daemon starts successfully when CDP port is reachable", async () => {
-    const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", "39997"], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", "39997"], {
       detached: true,
       stdio: "ignore",
     });
@@ -201,7 +201,7 @@ describe("daemon startup with CDP available", () => {
   });
 
   it("daemon writes correct host/port in daemon.json", async () => {
-    const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--host", "127.0.0.1", "--port", "39996"], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--host", "127.0.0.1", "--port", "39996"], {
       detached: true,
       stdio: "ignore",
     });
@@ -215,7 +215,7 @@ describe("daemon startup with CDP available", () => {
   });
 
   it("daemon HTTP /status responds when CDP is connected", async () => {
-    const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", "39995"], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", "39995"], {
       detached: true,
       stdio: "ignore",
     });
@@ -287,7 +287,7 @@ describe("ensureDaemon passes CDP info to daemon", () => {
 
   it("daemon discovers CDP via managed port file", async () => {
     // Daemon should read ~/.bb-browser/browser/cdp-port and find our fake CDP
-    const child = spawn(TSX, [DAEMON_ENTRY, "--port", "39993"], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--port", "39993"], {
       detached: true,
       stdio: "ignore",
     });
@@ -315,10 +315,14 @@ describe("core bug: daemon spawned without --cdp-port fails silently (#136)", ()
     cleanupDaemonJson();
   });
 
-  it("daemon with default port 9222 and nothing listening → exits, no daemon.json", async () => {
+  it("daemon with default port 9222 and nothing listening → exits, no daemon.json", async (t) => {
+    if (await isPortInUse("127.0.0.1", 9222)) {
+      t.skip("Port 9222 is in use on this machine, skipping test that requires 9222 free");
+      return;
+    }
     // This is exactly what ensureDaemon() does: spawn daemon with NO args
     // Default --cdp-port is 9222, nothing listening there → daemon exits
-    const child = spawn(TSX, [DAEMON_ENTRY], {
+    const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY], {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, BB_BROWSER_CDP_URL: undefined },
@@ -337,7 +341,7 @@ describe("core bug: daemon spawned without --cdp-port fails silently (#136)", ()
     const fakeCdp = await startFakeCdpServer(cdpPort);
 
     try {
-      const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", "39991"], {
+      const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", "39991"], {
         detached: true,
         stdio: "ignore",
       });
@@ -374,7 +378,7 @@ describe("CDP 503 error includes diagnostics", () => {
     const fakeCdp = await startFakeCdpServer(cdpPort);
 
     try {
-      const child = spawn(TSX, [DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", String(daemonPort)], {
+      const child = spawn(process.execPath, [TSX_CLI, DAEMON_ENTRY, "--cdp-port", String(cdpPort), "--port", String(daemonPort)], {
         detached: true,
         stdio: "ignore",
       });

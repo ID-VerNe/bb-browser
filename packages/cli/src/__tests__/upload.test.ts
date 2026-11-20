@@ -60,4 +60,17 @@ describe("CLI uploadCommand validation", () => {
       }
     );
   });
+
+  it("throws error when path is a directory", async () => {
+    await assert.rejects(
+      async () => {
+        await uploadCommand("@1", [tempDir]);
+      },
+      (err: Error) => {
+        assert.ok(err.message.includes("路径是目录而不是文件"));
+        assert.ok(err.message.includes(tempDir));
+        return true;
+      }
+    );
+  });
 });

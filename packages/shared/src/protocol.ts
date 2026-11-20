@@ -129,8 +129,8 @@ export interface Request {
   includeBase64?: boolean;
   /** 排除静态资源（trace events / network requests 使用） */
   excludeStatic?: boolean;
-  /** 本地文件物理绝对路径列表（upload 操作时使用） */
-  files?: string[];
+  /** 本地文件物理绝对路径列表（upload 操作时使用，支持数组、逗号分隔字符串或单个路径） */
+  files?: string[] | string;
   // sourceCommand and sourcePattern are declared above with other deprecated aliases
 }
 

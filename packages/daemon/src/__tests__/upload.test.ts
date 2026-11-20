@@ -99,7 +99,25 @@ describe("dispatchRequest upload handler", () => {
       sessionCommand: async <T = unknown>(targetId: string, method: string, params: any = {}): Promise<T> => {
         recordedCalls.push({ method, params });
         if (method === "DOM.setFileInputFiles") {
+          if (params.backendNodeId === 6666) {
+            throw new Error("Protocol error (DOM.setFileInputFiles): Node is not a file input element");
+          }
           return {} as T;
+        }
+        if (method === "DOM.resolveNode") {
+          return { object: { objectId: "mock-obj-1" } } as T;
+        }
+        if (method === "Runtime.callFunctionOn") {
+          if (params.objectId === "mock-container-obj") {
+            return { result: { objectId: "mock-resolved-input-obj" } } as T;
+          }
+          return { result: {} } as T;
+        }
+        if (method === "DOM.describeNode") {
+          if (params.objectId === "mock-resolved-input-obj") {
+            return { node: { backendNodeId: 8888 } } as T;
+          }
+          return { node: { backendNodeId: 999 } } as T;
         }
         return {} as T;
       },
@@ -256,5 +274,131 @@ describe("dispatchRequest upload handler", () => {
     const uploadCall = calls.find((c) => c.method === "DOM.setFileInputFiles");
     assert.ok(uploadCall);
     assert.equal(uploadCall?.params.backendNodeId, 999);
+  });
+
+  it("fails when specified path is a directory, not a file", async () => {
+    const calls: Array<{ method: string; params: any }> = [];
+    const cdp = createMockCdp(calls);
+
+    const res = await dispatchRequest(cdp, {
+      method: "upload",
+      tabId: tab.shortId,
+      selector: "input[type='file']",
+      files: [tempDir],
+    });
+
+    assert.ok(res.error);
+    assert.match(res.error!.message, /Path is a directory, not a file/);
+  });
+
+  it("parses multiple files from comma-separated string", async () => {
+    const calls: Array<{ method: string; params: any }> = [];
+    const cdp = createMockCdp(calls);
+
+    const res = await dispatchRequest(cdp, {
+      method: "upload",
+      tabId: tab.shortId,
+      selector: "input[type='file']",
+      files: `${tempFile1}, ${tempFile2}`,
+    });
+
+    assert.ifError(res.error);
+    assert.ok(res.result);
+    assert.equal(res.result.files?.length, 2);
+    const uploadCall = calls.find((c) => c.method === "DOM.setFileInputFiles");
+    assert.equal(uploadCall?.params.files.length, 2);
+  });
+
+  it("parses multiple files from JSON array string", async () => {
+    const calls: Array<{ method: string; params: any }> = [];
+    const cdp = createMockCdp(calls);
+
+    const res = await dispatchRequest(cdp, {
+      method: "upload",
+      tabId: tab.shortId,
+      selector: "input[type='file']",
+      files: JSON.stringify([tempFile1, tempFile2]),
+    });
+
+    assert.ifError(res.error);
+    assert.ok(res.result);
+    assert.equal(res.result.files?.length, 2);
+    const uploadCall = calls.find((c) => c.method === "DOM.setFileInputFiles");
+    assert.equal(uploadCall?.params.files.length, 2);
+  });
+
+  it("auto-resolves hidden input[type=file] when target is a container or label", async () => {
+    const calls: Array<{ method: string; params: any }> = [];
+    const cdp = createMockCdp(calls);
+
+    // Override resolveNode for this test to return mock-container-obj
+    const originalSessionCommand = cdp.sessionCommand.bind(cdp);
+    cdp.sessionCommand = async <T = unknown>(targetId: string, method: string, params: any = {}): Promise<T> => {
+      if (method === "DOM.resolveNode" && params.backendNodeId === 555) {
+        calls.push({ method, params });
+        return { object: { objectId: "mock-container-obj" } } as T;
+      }
+      return originalSessionCommand<T>(targetId, method, params);
+    };
+
+    // Prepopulate ref in tab pointing to container with backendDOMNodeId 555
+    tab.refs["15"] = {
+      backendDOMNodeId: 555,
+      role: "button",
+      name: "Upload Area",
+      tagName: "div",
+    } as RefInfo;
+
+    const res = await dispatchRequest(cdp, {
+      method: "upload",
+      tabId: tab.shortId,
+      ref: "@15",
+      files: [tempFile1],
+    });
+
+    assert.ifError(res.error);
+    assert.ok(res.result);
+
+    const uploadCall = calls.find((c) => c.method === "DOM.setFileInputFiles");
+    assert.ok(uploadCall);
+    // Should have resolved to 8888 (from Runtime.callFunctionOn + describeNode)
+    assert.equal(uploadCall?.params.backendNodeId, 8888);
+  });
+
+  it("returns structured error when DOM.setFileInputFiles throws protocol error", async () => {
+    const calls: Array<{ method: string; params: any }> = [];
+    const cdp = createMockCdp(calls);
+
+    tab.refs["20"] = {
+      backendDOMNodeId: 6666, // triggers protocol error in mock
+      role: "button",
+      name: "Invalid Target",
+      tagName: "div",
+    } as RefInfo;
+
+    const res = await dispatchRequest(cdp, {
+      method: "upload",
+      tabId: tab.shortId,
+      ref: "@20",
+      files: [tempFile1],
+    });
+
+    assert.ok(res.error);
+    assert.match(res.error!.message, /Node is not a file input element/);
+  });
+
+  it("returns structured error when ref is unknown numeric ref", async () => {
+    const calls: Array<{ method: string; params: any }> = [];
+    const cdp = createMockCdp(calls);
+
+    const res = await dispatchRequest(cdp, {
+      method: "upload",
+      tabId: tab.shortId,
+      ref: "@9999", // not in tab.refs
+      files: [tempFile1],
+    });
+
+    assert.ok(res.error);
+    assert.match(res.error!.message, /Unknown ref: 9999/);
   });
 });

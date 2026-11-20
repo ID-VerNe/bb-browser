@@ -5,7 +5,7 @@
  * CdpConnection + TabStateManager for per-tab state and seq tracking.
  */
 
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -835,82 +835,161 @@ export async function dispatchRequest(
     }
 
     case "upload": {
-      const files = Array.isArray(request.files)
-        ? request.files
-        : typeof request.files === "string"
-        ? [request.files]
-        : [];
-      if (files.length === 0) {
+      let fileList: string[] = [];
+      if (Array.isArray(request.files)) {
+        fileList = request.files;
+      } else if (typeof request.files === "string") {
+        const raw = request.files.trim();
+        if (raw.startsWith("[") && raw.endsWith("]")) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              fileList = parsed.map(String);
+            }
+          } catch {}
+        }
+        if (fileList.length === 0) {
+          if (existsSync(raw)) {
+            fileList = [raw];
+          } else if (raw.includes(",")) {
+            fileList = raw.split(",").map((s) => s.trim()).filter(Boolean);
+          } else {
+            fileList = [raw];
+          }
+        }
+      }
+
+      if (fileList.length === 0) {
         return fail("Missing files parameter");
       }
 
-      const resolvedFiles = files.map((f) => path.resolve(f));
+      const resolvedFiles = fileList.map((f) => path.resolve(f));
       for (const filePath of resolvedFiles) {
         if (!existsSync(filePath)) {
           return fail(`File not found: ${filePath}`);
+        }
+        try {
+          if (statSync(filePath).isDirectory()) {
+            return fail(`Path is a directory, not a file: ${filePath}`);
+          }
+        } catch {
+          return fail(`Cannot access file: ${filePath}`);
         }
       }
 
       let backendNodeId: number | undefined;
       const targetRef = request.ref;
 
-      if (targetRef) {
-        const cleanRef = targetRef.startsWith("@") ? targetRef.slice(1) : targetRef;
-        if (tab.refs[cleanRef]) {
-          backendNodeId = await parseRef(cdp, target.id, tab, cleanRef);
-        } else if (/^\d+$/.test(cleanRef)) {
-          backendNodeId = await parseRef(cdp, target.id, tab, cleanRef);
-        } else if (!request.selector) {
-          // If cleanRef is not in refs and not purely numeric, treat as CSS selector
-          request.selector = targetRef;
+      try {
+        if (targetRef) {
+          const cleanRef = targetRef.startsWith("@") ? targetRef.slice(1) : targetRef;
+          if (tab.refs[cleanRef]) {
+            backendNodeId = await parseRef(cdp, target.id, tab, cleanRef);
+          } else if (/^\d+$/.test(cleanRef)) {
+            backendNodeId = await parseRef(cdp, target.id, tab, cleanRef);
+          } else if (!request.selector) {
+            // If cleanRef is not in refs and not purely numeric, treat as CSS selector
+            request.selector = targetRef;
+          }
         }
-      }
 
-      if (!backendNodeId && request.selector) {
-        const document = await cdp.pageCommand<{ root: { nodeId: number } }>(
-          target.id,
-          "DOM.getDocument",
-          {},
-        );
-        const node = await cdp.pageCommand<{ nodeId: number }>(
-          target.id,
-          "DOM.querySelector",
-          { nodeId: document.root.nodeId, selector: request.selector },
-        );
-        if (!node.nodeId) {
-          return fail(`Element not found for selector: ${request.selector}`);
+        if (!backendNodeId && request.selector) {
+          const document = await cdp.pageCommand<{ root: { nodeId: number } }>(
+            target.id,
+            "DOM.getDocument",
+            {},
+          );
+          const node = await cdp.pageCommand<{ nodeId: number }>(
+            target.id,
+            "DOM.querySelector",
+            { nodeId: document.root.nodeId, selector: request.selector },
+          );
+          if (!node.nodeId) {
+            return fail(`Element not found for selector: ${request.selector}`);
+          }
+          const described = await cdp.pageCommand<{
+            node: { backendNodeId?: number };
+          }>(target.id, "DOM.describeNode", { nodeId: node.nodeId });
+          backendNodeId = described.node.backendNodeId;
         }
-        const described = await cdp.pageCommand<{
-          node: { backendNodeId?: number };
-        }>(target.id, "DOM.describeNode", { nodeId: node.nodeId });
-        backendNodeId = described.node.backendNodeId;
+
+        if (!backendNodeId) {
+          return fail("Missing ref or selector parameter");
+        }
+
+        // Auto-resolve associated or contained <input type="file"> if target is a label or container
+        try {
+          const resolved = await cdp.sessionCommand<{ object: { objectId: string } }>(
+            target.id,
+            "DOM.resolveNode",
+            { backendNodeId },
+          );
+          if (resolved?.object?.objectId) {
+            const fileInputNode = await cdp.sessionCommand<{
+              result: { objectId?: string; subtype?: string };
+            }>(target.id, "Runtime.callFunctionOn", {
+              objectId: resolved.object.objectId,
+              functionDeclaration: `function() {
+                if (this instanceof HTMLInputElement && (this.type || '').toLowerCase() === 'file') {
+                  return this;
+                }
+                if (this instanceof HTMLLabelElement) {
+                  if (this.control && (this.control.type || '').toLowerCase() === 'file') {
+                    return this.control;
+                  }
+                  if (this.htmlFor) {
+                    const el = document.getElementById(this.htmlFor);
+                    if (el && (el.type || '').toLowerCase() === 'file') return el;
+                  }
+                }
+                if (typeof this.querySelector === 'function') {
+                  const input = this.querySelector('input[type="file"]');
+                  if (input) return input;
+                }
+                return this;
+              }`,
+              returnByValue: false,
+            });
+
+            if (fileInputNode?.result?.objectId) {
+              const describedInput = await cdp.sessionCommand<{
+                node: { backendNodeId?: number };
+              }>(target.id, "DOM.describeNode", {
+                objectId: fileInputNode.result.objectId,
+              });
+              if (describedInput?.node?.backendNodeId) {
+                backendNodeId = describedInput.node.backendNodeId;
+              }
+            }
+          }
+        } catch {
+          // If auto-resolution fails, proceed with original backendNodeId
+        }
+
+        await cdp.sessionCommand(target.id, "DOM.setFileInputFiles", {
+          files: resolvedFiles,
+          backendNodeId,
+        });
+
+        const cleanRefKey = targetRef?.startsWith("@") ? targetRef.slice(1) : targetRef;
+        const refInfo = cleanRefKey ? tab.refs[cleanRefKey] : undefined;
+        const seq = tab.recordAction({
+          action: "upload",
+          ref: cleanRefKey && /^\d+$/.test(cleanRefKey) ? Number(cleanRefKey) : undefined,
+          selector: request.selector,
+          text: resolvedFiles.map((f) => path.basename(f)).join(", "),
+          role: refInfo?.role,
+          tag: refInfo?.tagName,
+        });
+
+        return ok({
+          tab: shortId,
+          seq,
+          files: resolvedFiles,
+        });
+      } catch (err) {
+        return fail(err);
       }
-
-      if (!backendNodeId) {
-        return fail("Missing ref or selector parameter");
-      }
-
-      const cleanRefKey = targetRef?.startsWith("@") ? targetRef.slice(1) : targetRef;
-      const refInfo = cleanRefKey ? tab.refs[cleanRefKey] : undefined;
-      const seq = tab.recordAction({
-        action: "upload",
-        ref: cleanRefKey && /^\d+$/.test(cleanRefKey) ? Number(cleanRefKey) : undefined,
-        selector: request.selector,
-        text: resolvedFiles.map((f) => path.basename(f)).join(", "),
-        role: refInfo?.role,
-        tag: refInfo?.tagName,
-      });
-
-      await cdp.sessionCommand(target.id, "DOM.setFileInputFiles", {
-        files: resolvedFiles,
-        backendNodeId,
-      });
-
-      return ok({
-        tab: shortId,
-        seq,
-        files: resolvedFiles,
-      });
     }
 
     case "get": {

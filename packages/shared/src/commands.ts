@@ -231,7 +231,7 @@ export const COMMANDS: CommandDef[] = [
     params: {
       ref: { type: "string", required: false, position: 0, description: "Element ref from snapshot (e.g. @1 or 1)" },
       selector: { type: "string", required: false, description: "CSS selector for the file input element" },
-      files: { type: "string", required: true, position: 1, description: "File path(s) to upload" },
+      files: { type: "string", required: true, position: 1, description: "File path(s) to upload (single path, comma-separated paths, or JSON array of paths)" },
       tab: { type: "string", required: true, description: "Tab short ID" },
     },
   },

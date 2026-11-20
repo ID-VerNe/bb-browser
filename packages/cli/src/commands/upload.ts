@@ -4,7 +4,7 @@
  */
 
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import type { Request, Response } from "@bb-browser/shared";
 import { sendCommand } from "../client.js";
 import { ensureDaemonRunning } from "../daemon-manager.js";
@@ -35,11 +35,15 @@ export async function uploadCommand(
     throw new Error("缺少待上传的文件路径");
   }
 
-  // Resolve absolute paths and verify files exist
+  // Resolve absolute paths and verify files exist and are regular files
   const absoluteFiles = files.map((f) => path.resolve(process.cwd(), f));
   for (let i = 0; i < absoluteFiles.length; i++) {
     if (!existsSync(absoluteFiles[i])) {
       throw new Error(`文件不存在: ${files[i]} (解析路径: ${absoluteFiles[i]})`);
+    }
+    const stat = statSync(absoluteFiles[i]);
+    if (stat.isDirectory()) {
+      throw new Error(`路径是目录而不是文件: ${files[i]} (解析路径: ${absoluteFiles[i]})`);
     }
   }
 
