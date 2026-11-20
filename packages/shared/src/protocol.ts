@@ -37,7 +37,8 @@ export type ActionType =
   | "site_search"
   | "goto"
   | "cookies"
-  | "source";
+  | "source"
+  | "upload";
 
 /** 请求类型 */
 export interface Request {
@@ -128,6 +129,8 @@ export interface Request {
   includeBase64?: boolean;
   /** 排除静态资源（trace events / network requests 使用） */
   excludeStatic?: boolean;
+  /** 本地文件物理绝对路径列表（upload 操作时使用） */
+  files?: string[];
   // sourceCommand and sourcePattern are declared above with other deprecated aliases
 }
 
@@ -363,6 +366,8 @@ export interface ResponseData {
   cookies?: Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean }>;
   /** Source grep results (source command) */
   sourceResults?: Array<{ url: string; matches: string[] }>;
+  /** 上传的文件路径列表（upload 命令返回） */
+  files?: string[];
 }
 
 /** 错误信息 */

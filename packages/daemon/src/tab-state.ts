@@ -40,6 +40,10 @@ export interface TraceSession {
 export interface ActionDetail {
   action: string;
   ref?: number;
+  selector?: string;
+  text?: string;
+  role?: string;
+  tag?: string;
   value?: string;
   key?: string;
   direction?: string;
@@ -116,6 +120,10 @@ export class TabState {
         source: 'command',
         action: detail.action,
         ref: detail.ref,
+        selector: detail.selector,
+        text: detail.text,
+        role: detail.role,
+        tag: detail.tag,
         value: detail.value,
         key: detail.key,
         direction: detail.direction,

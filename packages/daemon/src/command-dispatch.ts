@@ -5,7 +5,7 @@
  * CdpConnection + TabStateManager for per-tab state and seq tracking.
  */
 
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -831,6 +831,85 @@ export async function dispatchRequest(
         value: request.value,
         tab: shortId,
         seq,
+      });
+    }
+
+    case "upload": {
+      const files = Array.isArray(request.files)
+        ? request.files
+        : typeof request.files === "string"
+        ? [request.files]
+        : [];
+      if (files.length === 0) {
+        return fail("Missing files parameter");
+      }
+
+      const resolvedFiles = files.map((f) => path.resolve(f));
+      for (const filePath of resolvedFiles) {
+        if (!existsSync(filePath)) {
+          return fail(`File not found: ${filePath}`);
+        }
+      }
+
+      let backendNodeId: number | undefined;
+      const targetRef = request.ref;
+
+      if (targetRef) {
+        const cleanRef = targetRef.startsWith("@") ? targetRef.slice(1) : targetRef;
+        if (tab.refs[cleanRef]) {
+          backendNodeId = await parseRef(cdp, target.id, tab, cleanRef);
+        } else if (/^\d+$/.test(cleanRef)) {
+          backendNodeId = await parseRef(cdp, target.id, tab, cleanRef);
+        } else if (!request.selector) {
+          // If cleanRef is not in refs and not purely numeric, treat as CSS selector
+          request.selector = targetRef;
+        }
+      }
+
+      if (!backendNodeId && request.selector) {
+        const document = await cdp.pageCommand<{ root: { nodeId: number } }>(
+          target.id,
+          "DOM.getDocument",
+          {},
+        );
+        const node = await cdp.pageCommand<{ nodeId: number }>(
+          target.id,
+          "DOM.querySelector",
+          { nodeId: document.root.nodeId, selector: request.selector },
+        );
+        if (!node.nodeId) {
+          return fail(`Element not found for selector: ${request.selector}`);
+        }
+        const described = await cdp.pageCommand<{
+          node: { backendNodeId?: number };
+        }>(target.id, "DOM.describeNode", { nodeId: node.nodeId });
+        backendNodeId = described.node.backendNodeId;
+      }
+
+      if (!backendNodeId) {
+        return fail("Missing ref or selector parameter");
+      }
+
+      const cleanRefKey = targetRef?.startsWith("@") ? targetRef.slice(1) : targetRef;
+      const refInfo = cleanRefKey ? tab.refs[cleanRefKey] : undefined;
+      const seq = tab.recordAction({
+        action: "upload",
+        ref: cleanRefKey && /^\d+$/.test(cleanRefKey) ? Number(cleanRefKey) : undefined,
+        selector: request.selector,
+        text: resolvedFiles.map((f) => path.basename(f)).join(", "),
+        role: refInfo?.role,
+        tag: refInfo?.tagName,
+      });
+
+      await cdp.sessionCommand(target.id, "DOM.setFileInputFiles", {
+        files: resolvedFiles,
+        backendNodeId,
+      });
+
+      return ok({
+        tab: shortId,
+        seq,
+        files: resolvedFiles,
       });
     }
 

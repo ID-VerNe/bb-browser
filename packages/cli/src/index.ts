@@ -17,6 +17,7 @@ import { scrollCommand } from "./commands/scroll.js";
 import { backCommand, forwardCommand, reloadCommand } from "./commands/nav.js";
 import { checkCommand, uncheckCommand } from "./commands/check.js";
 import { selectCommand } from "./commands/select.js";
+import { uploadCommand } from "./commands/upload.js";
 import { evalCommand } from "./commands/eval.js";
 import { tabCommand } from "./commands/tab.js";
 import { frameCommand, frameMainCommand } from "./commands/frame.js";
@@ -39,7 +40,7 @@ const VERSION = __BB_BROWSER_VERSION__;
 // Commands that require --tab
 const TAB_REQUIRED_COMMANDS = new Set([
   "snap", "screenshot", "get",
-  "click", "hover", "fill", "type", "check", "uncheck", "select",
+  "click", "hover", "fill", "type", "check", "uncheck", "select", "upload",
   "press", "scroll", "back", "forward", "reload", "close",
   "frame", "dialog", "network", "console", "errors",
   "goto", "cookies", "source",
@@ -80,6 +81,7 @@ bb-browser - AI Agent 浏览器自动化工具
   type <ref> <text>            逐字符输入 (--tab required)
   check/uncheck <ref>          勾选/取消复选框 (--tab required)
   select <ref> <val>           下拉框选择 (--tab required)
+  upload <ref|sel> <files...>  上传本地文件 (--tab required)
   press <key>                  发送按键 (--tab required)
   scroll <dir> [px]            滚动页面 (--tab required)
 
@@ -432,6 +434,35 @@ async function main(): Promise<void> {
           process.exit(1);
         }
         await selectCommand(ref, value, { json: parsed.flags.json, tabId: globalTabId });
+        break;
+      }
+
+      case "upload": {
+        let target = parsed.args[0];
+        let filePaths = parsed.args.slice(1);
+        if (parsed.flags.selector && parsed.args.length > 0) {
+          if (parsed.args[0] === parsed.flags.selector) {
+            filePaths = parsed.args.slice(1);
+          } else {
+            filePaths = parsed.args;
+            target = "";
+          }
+        }
+        if (!target && !parsed.flags.selector) {
+          console.error("错误：缺少 ref 或 selector 参数");
+          console.error("用法：bb-browser upload <ref|selector> <file-paths...> --tab <tabId>");
+          process.exit(1);
+        }
+        if (filePaths.length === 0) {
+          console.error("错误：缺少待上传的文件路径");
+          console.error("用法：bb-browser upload <ref|selector> <file-paths...> --tab <tabId>");
+          process.exit(1);
+        }
+        await uploadCommand(target, filePaths, {
+          json: parsed.flags.json,
+          tabId: globalTabId,
+          selector: parsed.flags.selector,
+        });
         break;
       }
 
