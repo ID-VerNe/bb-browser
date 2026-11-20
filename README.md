@@ -147,6 +147,7 @@ bb-browser open https://example.com
 bb-browser snapshot -i                # accessibility tree
 bb-browser click @3                   # click element
 bb-browser fill @5 "hello"            # fill input
+bb-browser upload @5 "./file.png"     # upload file
 bb-browser eval "document.title"      # run JS
 bb-browser fetch URL --json           # authenticated fetch
 bb-browser network requests --with-body --json  # capture traffic

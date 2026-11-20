@@ -147,6 +147,7 @@ bb-browser open https://example.com
 bb-browser snapshot -i                # 可访问性树
 bb-browser click @3                   # 点击元素
 bb-browser fill @5 "hello"            # 填写输入框
+bb-browser upload @5 "./file.png"     # 上传本地文件
 bb-browser eval "document.title"      # 执行 JS
 bb-browser fetch URL --json           # 带登录态的 fetch
 bb-browser network requests --with-body --json  # 抓包

@@ -135,6 +135,9 @@ bb-browser type @3 "text"       # 追加输入（不清空）
 bb-browser check @7             # 勾选复选框
 bb-browser uncheck @7           # 取消勾选
 bb-browser select @4 "option"   # 下拉选择
+bb-browser upload @2 /path/to/file.png              # 上传单个本地文件
+bb-browser upload @2 /path/to/a.jpg /path/to/b.jpg  # 上传多个文件
+bb-browser upload "input[type=file]" /path/to/file  # 按 CSS 选择器上传
 bb-browser press Enter          # 按键
 bb-browser press Control+a      # 组合键
 bb-browser scroll down          # 向下滚动（默认 300px）

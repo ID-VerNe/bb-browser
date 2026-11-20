@@ -224,6 +224,17 @@ export const COMMANDS: CommandDef[] = [
       tab: { type: "string", required: true, description: "Tab short ID" },
     },
   },
+  {
+    method: "upload", group: "interact",
+    description: "Upload local file(s) to a file input element by ref or CSS selector",
+    requiresTab: true,
+    params: {
+      ref: { type: "string", required: false, position: 0, description: "Element ref from snapshot (e.g. @1 or 1)" },
+      selector: { type: "string", required: false, description: "CSS selector for the file input element" },
+      files: { type: "string", required: true, position: 1, description: "File path(s) to upload" },
+      tab: { type: "string", required: true, description: "Tab short ID" },
+    },
+  },
 
   // ---------------------------------------------------------------------------
   // Tab
