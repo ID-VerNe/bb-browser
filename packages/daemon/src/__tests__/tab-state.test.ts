@@ -334,6 +334,24 @@ describe("TabState", () => {
       assert.equal(items[0].url, "https://example.com/10");
       assert.equal(items[499].url, "https://example.com/509");
     });
+
+    it("deletes evicted request from networkByRequestId to prevent memory leaks", () => {
+      const mgr = makeManager();
+      const tab = makeTab(mgr);
+      for (let i = 0; i < 1000; i++) {
+        tab.addNetworkRequest(`req-${i}`, {
+          url: `https://example.com/${i}`,
+          method: "GET",
+          timestamp: Date.now(),
+        });
+      }
+      assert.equal(tab.networkRequests.size, 500);
+      assert.equal((tab as any).networkByRequestId.size, 500);
+      assert.equal((tab as any).networkByRequestId.has("req-0"), false);
+      assert.equal((tab as any).networkByRequestId.has("req-499"), false);
+      assert.equal((tab as any).networkByRequestId.has("req-500"), true);
+      assert.equal((tab as any).networkByRequestId.has("req-999"), true);
+    });
   });
 
   // --------------- getConsoleMessages query options ---------------

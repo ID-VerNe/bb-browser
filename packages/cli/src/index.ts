@@ -266,7 +266,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === "--exclude-static") {
       (result.flags as Record<string, unknown>).excludeStatic = true;
     } else if (arg.startsWith("-")) {
-      // Unknown flags, ignore
+      // site 命令支持 adapter 自定义参数（如 --sort_type）。
+      // 对 site 命令透传未知 flag，避免其值被错当作位置参数。
+      if (result.command === "site") {
+        result.args.push(arg);
+      }
     } else if (result.command === null) {
       result.command = arg;
     } else {

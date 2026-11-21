@@ -53,6 +53,15 @@ describe("RingBuffer", () => {
       for (let i = 1; i <= 6; i++) buf.push(i);
       assert.deepEqual(buf.toArray(), [4, 5, 6]);
     });
+
+    it("returns undefined when not at capacity and evicted item when at capacity", () => {
+      const buf = new RingBuffer<number>(3);
+      assert.equal(buf.push(1), undefined);
+      assert.equal(buf.push(2), undefined);
+      assert.equal(buf.push(3), undefined);
+      assert.equal(buf.push(4), 1);
+      assert.equal(buf.push(5), 2);
+    });
   });
 
   describe("size", () => {

@@ -400,6 +400,10 @@ async function mouseClick(cdp: CdpConnection, targetId: string, x: number, y: nu
   });
 }
 
+async function activateTarget(cdp: CdpConnection, targetId: string): Promise<void> {
+  await cdp.browserCommand("Target.activateTarget", { targetId });
+}
+
 async function insertTextIntoNode(
   cdp: CdpConnection,
   targetId: string,
@@ -549,7 +553,7 @@ async function resolveTabByDomain(
   // No matching tab — create one and wait for initial load
   const created = await cdp.browserCommand<{ targetId: string }>(
     "Target.createTarget",
-    { url: `https://${domain}` },
+    { url: `https://${domain}`, background: true },
   );
   await cdp.attachAndEnable(created.targetId);
 
@@ -595,6 +599,7 @@ export async function dispatchRequest(
 ): Promise<Response> {
   // Resolve target from request.tabId (supports short IDs)
   const tabRef = request.tabId;
+  const useCurrentTab = tabRef === "current";
 
   // tab_new must work even when there are no existing tabs,
   // so handle it before ensurePageTarget().
@@ -636,7 +641,7 @@ export async function dispatchRequest(
   }
 
   const target = await cdp.ensurePageTarget(
-    tabRef !== undefined ? String(tabRef) : undefined,
+    tabRef !== undefined && !useCurrentTab ? String(tabRef) : undefined,
   );
   const tab = cdp.tabManager.getTab(target.id);
   if (!tab) throw new Error("Internal error: tab state not found");
@@ -661,7 +666,7 @@ export async function dispatchRequest(
         return ok({
           url: request.url,
           tabId: newTarget.id,
-          tab: newTab?.shortId ?? shortId,
+          tab: newTab?.shortId ?? newTarget.id.slice(-4).toLowerCase(),
           seq,
         });
       }
@@ -763,6 +768,9 @@ export async function dispatchRequest(
         role: refInfo?.role,
         tag: refInfo?.tagName,
       });
+      if (request.method === "click") {
+        await activateTarget(cdp, target.id);
+      }
       const backendNodeId = await parseRef(cdp, target.id, tab, request.ref);
       const point = await getInteractablePoint(cdp, target.id, backendNodeId);
       await cdp.sessionCommand(target.id, "Input.dispatchMouseEvent", {
@@ -1044,6 +1052,7 @@ export async function dispatchRequest(
         case "left": deltaX = -pixels; break;
         case "right": deltaX = pixels; break;
       }
+      await activateTarget(cdp, target.id);
       await cdp.sessionCommand(target.id, "Input.dispatchMouseEvent", {
         type: "mouseWheel", x: 0, y: 0, deltaX, deltaY,
       });

@@ -238,7 +238,7 @@ export async function executeSiteAdapter(
     if (!targetId) {
       const created = await cdp.browserCommand<{ targetId: string }>(
         "Target.createTarget",
-        { url: `https://${site.domain}` },
+        { url: `https://${site.domain}`, background: true },
       );
       await cdp.attachAndEnable(created.targetId);
       targetId = created.targetId;

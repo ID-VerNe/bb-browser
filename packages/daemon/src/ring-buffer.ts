@@ -21,13 +21,18 @@ export class RingBuffer<T> {
     return this.count;
   }
 
-  /** Push a new element, evicting the oldest if at capacity. */
-  push(item: T): void {
+  /** Push a new element, evicting the oldest if at capacity. Returns the evicted item if full. */
+  push(item: T): T | undefined {
+    let evicted: T | undefined;
+    if (this.count === this.capacity) {
+      evicted = this.items[this.head];
+    }
     this.items[this.head] = item;
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) {
       this.count++;
     }
+    return evicted;
   }
 
   /** Return all stored elements in insertion order (oldest first). */
